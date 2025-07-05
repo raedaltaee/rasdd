@@ -1,1 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Auth Fix</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+            background-color: #f0f4f8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 2.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            max-width: 90%;
+            width: 400px;
+            text-align: center;
+        }
+        .message-box {
+            background-color: #ffe0b2; /* Light orange */
+            color: #e65100; /* Darker orange */
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ff9800;
+            display: none; /* Hidden by default */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6">Firebase Authentication</h1>
+        <div id="messageBox" class="message-box"></div>
+        <p id="authStatus" class="text-lg text-gray-700 mb-4">Initializing Firebase...</p>
+        <p class="text-sm text-gray-500">Your User ID: <span id="userIdDisplay" class="font-mono">Loading...</span></p>
+    </div>
+
+    <script type="module">
+        // Import Firebase modules from CDN
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase variables
+        let app;
+        let auth;
+        let db;
+        let userId;
+
+        const messageBox = document.getElementById('messageBox');
+        const authStatusElement = document.getElementById('authStatus');
+        const userIdDisplayElement = document.getElementById('userIdDisplay');
+
+        function showMessage(message, isError = false) {
+            messageBox.textContent = message;
+            messageBox.style.display = 'block';
+            if (isError) {
+                messageBox.style.backgroundColor = '#ffcdd2'; /* Light red */
+                messageBox.style.color = '#b71c1c'; /* Darker red */
+                messageBox.style.borderColor = '#ef5350';
+            } else {
+                messageBox.style.backgroundColor = '#e8f5e9'; /* Light green */
+                messageBox.style.color = '#2e7d32'; /* Darker green */
+                messageBox.style.borderColor = '#66bb6a';
+            }
+        }
+
+        // Initialize Firebase and handle authentication
+        window.onload = async function() {
+            try {
+                // Access global variables provided by the Canvas environment
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                if (!firebaseConfig) {
+                    console.error("Firebase config not found.");
+                    showMessage("Error: Firebase configuration is missing. Cannot initialize app.", true);
+                    return;
+                }
+
+                // Initialize Firebase app
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                authStatusElement.textContent = "Authenticating...";
+
+                // Listen for authentication state changes
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        authStatusElement.textContent = `Authenticated as: ${userId}`;
+                        userIdDisplayElement.textContent = userId;
+                        console.log("Authentication successful, user ID:", userId);
+                        showMessage("Authentication successful!");
+
+                        // Example Firestore operation after authentication
+                        // This part demonstrates how to use Firestore after successful auth
+                        const usersCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/profile`);
+                        const userDocRef = doc(usersCollectionRef, "data");
+
+                        // Set some initial data for the user's profile if it doesn't exist
+                        await setDoc(userDocRef, {
+                            lastLogin: new Date().toISOString(),
+                            appId: appId
+                        }, { merge: true });
+                        console.log("User profile data updated in Firestore.");
+
+                        // Set up a real-time listener for the user's data
+                        onSnapshot(userDocRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                console.log("Current profile data:", docSnap.data());
+                                // You can update UI based on this data
+                            } else {
+                                console.log("No profile data found for user.");
+                            }
+                        }, (error) => {
+                            console.error("Error listening to profile data:", error);
+                            showMessage(`Error listening to data: ${error.message}`, true);
+                        });
+
+                    } else {
+                        // User is signed out or not yet signed in
+                        userId = 'not-authenticated'; // Fallback for UI if needed before full auth
+                        authStatusElement.textContent = "Not authenticated. Attempting sign-in...";
+                        userIdDisplayElement.textContent = "N/A";
+                        console.log("User is signed out. Attempting initial sign-in.");
+
+                        try {
+                            if (initialAuthToken) {
+                                // Try signing in with the custom token if provided
+                                await signInWithCustomToken(auth, initialAuthToken);
+                                console.log("Signed in with custom token.");
+                            } else {
+                                // Fallback to anonymous sign-in if no custom token
+                                await signInAnonymously(auth);
+                                console.log("Signed in anonymously.");
+                            }
+                        } catch (error) {
+                            console.error("Login failed:", error);
+                            showMessage(`Login failed: ${error.message}. Please ensure authentication methods are enabled in Firebase console.`, true);
+                            authStatusElement.textContent = "Authentication Failed.";
+                            userIdDisplayElement.textContent = "Error";
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization error:", error);
+                showMessage(`Firebase initialization error: ${error.message}`, true);
+            }
+        };
+    </script>
+</body>
+</html>
 # rasdd
